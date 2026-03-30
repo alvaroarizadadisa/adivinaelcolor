@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Colors y Clues</title>
+    <link rel="stylesheet" href="./style.css" />
+</head>
+
+<body>
+    <div class="bg"></div>
+
+    <main class="app-shell">
+        <section id="joinScreen" class="panel join-panel">
+            <h1 class="game-title">COLORS Y CLUES</h1>
+            <p class="subtitle">Versión casera en español</p>
+
+            <div class="form-row">
+                <input id="nicknameInput" type="text" maxlength="20" placeholder="Escribe tu mote" autocomplete="off" />
+                <button id="joinBtn">Entrar</button>
+            </div>
+
+            <p id="joinError" class="error"></p>
+            <p class="small-note">
+                Si recargas, el juego intentará reconectarte automáticamente.
+            </p>
+        </section>
+
+        <section id="mainScreen" class="hidden main-layout">
+            <aside class="side-panel panel">
+                <h2 class="side-title">SALA</h2>
+
+                <div class="status-grid">
+                    <div class="badge">
+                        <span>Jugadores</span>
+                        <strong id="playerCount">0</strong>
+                    </div>
+                    <div class="badge">
+                        <span>Listos</span>
+                        <strong id="readyCount" class="pill dark">0/0</strong>
+                    </div>
+                    <div class="badge">
+                        <span>Ronda</span>
+                        <strong id="roundNumber">0</strong>
+                    </div>
+                </div>
+
+                <div class="section-block">
+                    <h3>MARCADOR</h3>
+                    <ul id="scoreList" class="score-list"></ul>
+                </div>
+
+                <div class="section-block" id="lobbyControls">
+                    <h3>LOBBY</h3>
+                    <button id="readyBtn">Estoy listo</button>
+                    <p class="hint">
+                        La partida empieza cuando haya al menos 2 jugadores y todos estén listos.
+                    </p>
+                </div>
+
+                <div class="section-block">
+                    <h3>JUGADORES</h3>
+                    <ul id="playersList" class="players-list"></ul>
+                </div>
+
+                <div class="section-block hidden" id="resetPanel">
+                    <h3>REINICIO</h3>
+                    <div id="resetPanelContent"></div>
+                </div>
+            </aside>
+
+            <section class="board-panel panel">
+                <div class="topbar">
+                    <div>
+                        <h2 id="phaseTitle">LOBBY</h2>
+                        <p id="phaseDescription" class="phase-description">
+                            Esperando jugadores.
+                        </p>
+                    </div>
+                    <div id="turnBadge" class="turn-badge">SIN TURNO</div>
+                </div>
+
+                <div id="clueError" class="error clue-error"></div>
+
+                <div id="clueBox" class="clue-box hidden">
+                    <div class="clue-line">
+                        <span class="clue-label">PISTA 1</span>
+                        <strong id="clue1Text">-</strong>
+                    </div>
+                    <div class="clue-line">
+                        <span class="clue-label">PISTA 2</span>
+                        <strong id="clue2Text">-</strong>
+                    </div>
+                </div>
+
+                <div id="controlPanel" class="control-panel"></div>
+
+                <div class="board-wrap">
+                    <div class="board-layout">
+                        <div class="corner-label"></div>
+                        <div id="topCoords" class="top-coords"></div>
+
+                        <div id="leftCoords" class="left-coords"></div>
+                        <div id="board" class="board"></div>
+                    </div>
+                </div>
+
+                <div id="scoringPanel" class="scoring-panel hidden"></div>
+                <div id="winnerBanner" class="winner-banner hidden"></div>
+            </section>
+        </section>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./app.js"></script>
+</body>
+
+</html>
