@@ -1,8 +1,8 @@
 const DEFAULT_LOCAL_BACKEND = "http://localhost:3000";
-const PROD_BACKEND = "https://TU-BACKEND.onrender.com";
+const PROD_BACKEND = "https://adivinaelcolor.onrender.com";
 
 const IS_LOCAL =
-    window.location.hostname === "localhost" ||
+    window.location.hostname === "localhost" || //
     window.location.hostname === "127.0.0.1";
 
 const SOCKET_URL = IS_LOCAL ? DEFAULT_LOCAL_BACKEND : PROD_BACKEND;
