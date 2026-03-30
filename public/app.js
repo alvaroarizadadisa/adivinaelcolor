@@ -13,6 +13,7 @@ const socket = io(SOCKET_URL, {
 
 const SESSION_KEY = "colors_y_clues_session_token";
 const NICKNAME_KEY = "colors_y_clues_nickname";
+const CHAT_OPEN_KEY = "colors_y_clues_chat_open";
 
 const joinScreen = document.getElementById("joinScreen");
 const mainScreen = document.getElementById("mainScreen");
@@ -49,11 +50,23 @@ const winnerBanner = document.getElementById("winnerBanner");
 const resetPanel = document.getElementById("resetPanel");
 const resetPanelContent = document.getElementById("resetPanelContent");
 
+const chatWindow = document.getElementById("chatWindow");
+const chatToggleBtn = document.getElementById("chatToggleBtn");
+const chatMinimizeBtn = document.getElementById("chatMinimizeBtn");
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+const sendChatBtn = document.getElementById("sendChatBtn");
+const chatError = document.getElementById("chatError");
+const chatStatus = document.getElementById("chatStatus");
+
 let myId = null;
+let myPlayerKey = null;
 let joined = false;
 let latestState = null;
 let localSelectedTarget = null;
 let localGuess = null;
+let attemptedAutoJoin = false;
+let chatHistory = [];
 
 nicknameInput.value = localStorage.getItem(NICKNAME_KEY) || "";
 
@@ -83,6 +96,14 @@ function coordText(x, y) {
     return `${numberToLetters(x)}${y + 1}`;
 }
 
+function formatChatTime(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+}
+
 function showJoin() {
     joinScreen.classList.remove("hidden");
     mainScreen.classList.add("hidden");
@@ -103,8 +124,12 @@ function saveSessionToken(token) {
     }
 }
 
+function getStoredNickname() {
+    return localStorage.getItem(NICKNAME_KEY) || "";
+}
+
 function getMe() {
-    return latestState?.players?.find((p) => p.id === myId) || null;
+    return latestState?.players?.find((p) => p.playerKey === myPlayerKey) || null;
 }
 
 function getRound() {
@@ -112,13 +137,13 @@ function getRound() {
 }
 
 function isClueGiver() {
-    return latestState?.currentClueGiverId === myId;
+    return latestState?.currentClueGiverPlayerKey === myPlayerKey;
 }
 
 function getMyGuessData() {
     const round = getRound();
     if (!round) return null;
-    return round.guesses?.[myId] || null;
+    return round.guesses?.[myPlayerKey] || null;
 }
 
 function showMarkerAlreadyAt(x, y, guesses) {
@@ -211,14 +236,14 @@ function renderBoard() {
                 cell.appendChild(marker);
             }
 
-            Object.entries(guesses).forEach(([playerId, guessInfo]) => {
+            Object.entries(guesses).forEach(([playerKey, guessInfo]) => {
                 if (!guessInfo.visible) return;
                 if (guessInfo.visible.x !== x || guessInfo.visible.y !== y) return;
 
                 const marker = document.createElement("div");
                 marker.className = "marker";
                 marker.style.background =
-                    playerId === myId ? "rgba(255,255,255,0.95)" : "rgba(17,17,17,0.85)";
+                    playerKey === myPlayerKey ? "rgba(255,255,255,0.95)" : "rgba(17,17,17,0.85)";
                 marker.title = `${guessInfo.nickname}: ${coordText(x, y)}`;
                 cell.appendChild(marker);
             });
@@ -249,7 +274,7 @@ function renderPlayers(players, phase) {
 
         const left = document.createElement("div");
         left.className = "player-name";
-        left.textContent = player.nickname + (player.id === myId ? " (tú)" : "");
+        left.textContent = player.nickname + (player.playerKey === myPlayerKey ? " (tú)" : "");
 
         const right = document.createElement("div");
         right.className = "player-state";
@@ -274,7 +299,9 @@ function renderPlayers(players, phase) {
 function renderScores(players) {
     scoreList.innerHTML = "";
 
-    const ordered = [...players].sort((a, b) => b.score - a.score);
+    const ordered = [...players]
+        .filter((p) => p.connected)
+        .sort((a, b) => b.score - a.score);
 
     ordered.forEach((player) => {
         const li = document.createElement("li");
@@ -282,7 +309,7 @@ function renderScores(players) {
 
         const left = document.createElement("div");
         left.className = "score-name";
-        left.textContent = player.nickname + (player.id === myId ? " (tú)" : "");
+        left.textContent = player.nickname + (player.playerKey === myPlayerKey ? " (tú)" : "");
 
         const right = document.createElement("div");
         right.className = "score-points";
@@ -420,7 +447,7 @@ function renderControlPanel() {
 
     if (phase === "lobby") {
         controlPanel.innerHTML = `
-      <p class="info-text">Pon tu mote, entra al lobby y pulsa “Estoy listo”.</p>
+        <p class="info-text">Para comenzar la partida todos los jugadores de la sala deben pulsar "Estoy listo".</p>
     `;
         return;
     }
@@ -702,6 +729,67 @@ function renderResetVote() {
     });
 }
 
+function renderChatWindowState() {
+    const isOpen = localStorage.getItem(CHAT_OPEN_KEY) !== "0";
+
+    if (!chatWindow) return;
+
+    chatWindow.classList.toggle("minimized", !isOpen);
+    if (chatToggleBtn) {
+        chatToggleBtn.textContent = isOpen ? "−" : "+";
+        chatToggleBtn.title = isOpen ? "Minimizar chat" : "Abrir chat";
+    }
+}
+
+function toggleChatWindow() {
+    const isOpen = localStorage.getItem(CHAT_OPEN_KEY) !== "0";
+    localStorage.setItem(CHAT_OPEN_KEY, isOpen ? "0" : "1");
+    renderChatWindowState();
+}
+
+function renderChatStatus() {
+    if (!chatStatus) return;
+
+    if (!joined) {
+        chatStatus.textContent = "Debes entrar en la sala para escribir.";
+        return;
+    }
+
+    if (!socket.connected) {
+        chatStatus.textContent = "Reconectando chat...";
+        return;
+    }
+
+    chatStatus.textContent = "Conectado";
+}
+
+function renderChat() {
+    if (!chatMessages) return;
+
+    if (!chatHistory.length) {
+        chatMessages.innerHTML = `<div class="chat-empty">Todavía no hay mensajes.</div>`;
+        renderChatStatus();
+        return;
+    }
+
+    chatMessages.innerHTML = chatHistory.map((message) => {
+        const mine = message.playerKey === myPlayerKey;
+
+        return `
+        <article class="chat-message ${mine ? "mine" : ""}">
+          <div class="chat-message-top">
+            <strong class="chat-author">${escapeHtml(message.nickname)}${mine ? " (tú)" : ""}</strong>
+            <span class="chat-time">${escapeHtml(formatChatTime(message.createdAt))}</span>
+          </div>
+          <div class="chat-message-text">${escapeHtml(message.text)}</div>
+        </article>
+      `;
+    }).join("");
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    renderChatStatus();
+}
+
 function syncLocalSelectionsFromState() {
     const myGuess = getMyGuessData();
 
@@ -749,6 +837,10 @@ function renderState(state) {
         myId = state.meId;
     }
 
+    if (state.mePlayerKey) {
+        myPlayerKey = state.mePlayerKey;
+    }
+
     if (joined) {
         showMain();
     }
@@ -770,6 +862,7 @@ function renderState(state) {
     renderScoring();
     renderWinner();
     renderResetVote();
+    renderChatStatus();
 }
 
 function joinWithNickname() {
@@ -789,6 +882,43 @@ function joinWithNickname() {
     });
 }
 
+function tryAutoJoin() {
+    if (attemptedAutoJoin) return;
+    attemptedAutoJoin = true;
+
+    const nickname = getStoredNickname();
+    const sessionToken = getSessionToken();
+
+    if (!nickname || !sessionToken) return;
+
+    socket.emit("join_room", {
+        nickname,
+        sessionToken
+    });
+}
+
+function sendChatMessage() {
+    if (!joined) {
+        chatError.textContent = "Primero tienes que entrar en la sala.";
+        renderChatStatus();
+        return;
+    }
+
+    if (!socket.connected) {
+        chatError.textContent = "No hay conexión con el servidor.";
+        renderChatStatus();
+        return;
+    }
+
+    const text = chatInput.value.trim();
+    chatError.textContent = "";
+
+    if (!text) return;
+
+    socket.emit("send_chat_message", { text });
+    chatInput.value = "";
+}
+
 joinBtn.addEventListener("click", joinWithNickname);
 
 nicknameInput.addEventListener("keydown", (event) => {
@@ -802,11 +932,43 @@ readyBtn.addEventListener("click", () => {
     socket.emit("toggle_ready");
 });
 
-socket.on("joined_ok", ({ id, sessionToken }) => {
+if (sendChatBtn) {
+    sendChatBtn.addEventListener("click", sendChatMessage);
+}
+
+if (chatInput) {
+    chatInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            sendChatMessage();
+        }
+    });
+}
+
+if (chatToggleBtn) {
+    chatToggleBtn.addEventListener("click", toggleChatWindow);
+}
+
+if (chatMinimizeBtn) {
+    chatMinimizeBtn.addEventListener("click", toggleChatWindow);
+}
+
+socket.on("connect", () => {
+    attemptedAutoJoin = false;
+    tryAutoJoin();
+    renderChatStatus();
+});
+
+socket.on("disconnect", () => {
+    renderChatStatus();
+});
+
+socket.on("joined_ok", ({ id, playerKey, sessionToken }) => {
     myId = id;
+    myPlayerKey = playerKey;
     joined = true;
     saveSessionToken(sessionToken);
     showMain();
+    renderChatStatus();
 });
 
 socket.on("join_error", ({ message }) => {
@@ -817,8 +979,27 @@ socket.on("clue_error", ({ message }) => {
     clueError.textContent = message;
 });
 
+socket.on("chat_error", ({ message }) => {
+    chatError.textContent = message;
+});
+
+socket.on("chat_history", (messages) => {
+    chatHistory = Array.isArray(messages) ? messages : [];
+    renderChat();
+});
+
+socket.on("chat_message", (message) => {
+    chatHistory.push(message);
+    if (chatHistory.length > 50) {
+        chatHistory = chatHistory.slice(-50);
+    }
+    renderChat();
+});
+
 socket.on("state", (state) => {
     renderState(state);
 });
 
 showJoin();
+renderChatWindowState();
+renderChat();

@@ -13,8 +13,8 @@
 
     <main class="app-shell">
         <section id="joinScreen" class="panel join-panel">
-            <h1 class="game-title">COLORS Y CLUES</h1>
-            <p class="subtitle">Versión casera en español</p>
+            <h1 class="game-title">🎨 COLORS Y CLUES</h1>
+            <p class="subtitle">Introduce tu nickname y pulsa Entrar</p>
 
             <div class="form-row">
                 <input id="nicknameInput" type="text" maxlength="20" placeholder="Escribe tu mote" autocomplete="off" />
@@ -23,73 +23,76 @@
 
             <p id="joinError" class="error"></p>
             <p class="small-note">
-                Si recargas, el juego intentará reconectarte automáticamente.
+                🔄 Si recargas, el juego intentará reconectarte automáticamente a la sala.
             </p>
         </section>
 
         <section id="mainScreen" class="hidden main-layout">
             <aside class="side-panel panel">
-                <h2 class="side-title">SALA</h2>
+                <h2 class="side-title">🎨 SALA DE ESPERA</h2>
 
                 <div class="status-grid">
                     <div class="badge">
-                        <span>Jugadores</span>
+                        <span>👥 Jugadores</span>
                         <strong id="playerCount">0</strong>
                     </div>
                     <div class="badge">
-                        <span>Listos</span>
+                        <span>✅ Listos</span>
                         <strong id="readyCount" class="pill dark">0/0</strong>
                     </div>
                     <div class="badge">
-                        <span>Ronda</span>
+                        <span>🔁 Ronda</span>
                         <strong id="roundNumber">0</strong>
                     </div>
                 </div>
 
                 <div class="section-block">
-                    <h3>MARCADOR</h3>
+                    <h3>🏆 MARCADOR</h3>
                     <ul id="scoreList" class="score-list"></ul>
                 </div>
 
                 <div class="section-block" id="lobbyControls">
-                    <h3>LOBBY</h3>
-                    <button id="readyBtn">Estoy listo</button>
-                    <p class="hint">
-                        La partida empieza cuando haya al menos 2 jugadores y todos estén listos.
-                    </p>
+                    <h3>🟢 LOBBY</h3>
+                    <button id="readyBtn">✅ Estoy listo</button>
                 </div>
 
                 <div class="section-block">
-                    <h3>JUGADORES</h3>
+                    <h3>🧑‍🤝‍🧑 JUGADORES</h3>
                     <ul id="playersList" class="players-list"></ul>
                 </div>
 
                 <div class="section-block hidden" id="resetPanel">
-                    <h3>REINICIO</h3>
+                    <h3>🔄 REINICIO</h3>
                     <div id="resetPanelContent"></div>
+                </div>
+
+                <div class="bottom-gif-area">
+                    <div class="bottom-gif-box">
+                        <img id="footerGif" class="footer-gif" src="chikorita.gif" alt="Gif decorativo" />
+                    </div>
                 </div>
             </aside>
 
             <section class="board-panel panel">
                 <div class="topbar">
                     <div>
-                        <h2 id="phaseTitle">LOBBY</h2>
+                        <h2 id="phaseTitle">🎮 LOBBY</h2>
                         <p id="phaseDescription" class="phase-description">
                             Esperando jugadores.
                         </p>
                     </div>
-                    <div id="turnBadge" class="turn-badge">SIN TURNO</div>
+                    <div id="turnBadge" class="turn-badge">⏳ SIN TURNO</div>
                 </div>
 
                 <div id="clueError" class="error clue-error"></div>
 
                 <div id="clueBox" class="clue-box hidden">
                     <div class="clue-line">
-                        <span class="clue-label">PISTA 1</span>
+                        <span class="clue-label">💡 PISTA 1</span>
                         <strong id="clue1Text">-</strong>
                     </div>
                     <div class="clue-line">
-                        <span class="clue-label">PISTA 2</span>
+                        <span class="clue-label">💡 PISTA 2</span>
                         <strong id="clue2Text">-</strong>
                     </div>
                 </div>
@@ -111,6 +114,37 @@
             </section>
         </section>
     </main>
+
+    <section id="chatWindow" class="chat-window">
+        <div class="chat-header">
+            <div class="chat-header-left">
+                <span class="chat-header-dot"></span>
+                <strong>SALA DE CHAT</strong>
+            </div>
+
+            <div class="chat-header-actions">
+                <button id="chatToggleBtn" class="chat-header-btn" title="Minimizar chat">−</button>
+            </div>
+        </div>
+
+        <div class="chat-body">
+            <div id="chatMessages" class="chat-messages"></div>
+
+            <div class="chat-footer">
+                <div id="chatStatus" class="chat-status">Conectado</div>
+                <div class="chat-form">
+                    <input id="chatInput" type="text" maxlength="200" placeholder="Escribe un mensaje..."
+                        autocomplete="off" />
+                    <button id="sendChatBtn">Enviar</button>
+                </div>
+                <p id="chatError" class="error chat-error"></p>
+            </div>
+        </div>
+
+        <button id="chatMinimizeBtn" class="chat-collapsed-tab" type="button">
+            💬 SALA DE CHAT
+        </button>
+    </section>
 
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"
         integrity="sha384-kzavj5fiMwLKzzD1f8S7TeoVIEi7uKHvbTA3ueZkrzYq75pNQUiUi6Dy98Q3fxb0"

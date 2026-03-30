@@ -6,17 +6,17 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
+const PORT = process.env.PORT || 3000;
+const CLIENT_URL = process.env.CLIENT_URL || "*";
+
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: CLIENT_URL,
         methods: ["GET", "POST"]
     }
 });
 
 app.use(express.static(path.join(__dirname, "public")));
-
-const PORT = process.env.PORT || 3000;
-const CLIENT_URL = process.env.CLIENT_URL || "*";
 
 const MIN_PLAYERS = 2;
 const MAX_SCORE = 25;
@@ -24,6 +24,10 @@ const BOARD_ROWS = 16;
 const BOARD_COLS = 30;
 const TARGET_OPTIONS_COUNT = 4;
 const RECONNECT_GRACE_MS = 60_000;
+
+const MAX_CHAT_MESSAGES = 50;
+const MAX_CHAT_LENGTH = 200;
+const CHAT_MIN_INTERVAL_MS = 700;
 
 const FORBIDDEN_CLUE_WORDS = new Set([
     "rojo", "roja", "rojos", "rojas",
@@ -61,7 +65,8 @@ function normalizeWord(word) {
     return String(word || "")
         .toLowerCase()
         .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function splitWords(text) {
@@ -141,18 +146,20 @@ function buildBoard() {
 function createPlayer({ id, nickname, sessionToken }) {
     return {
         id,
+        playerKey: randomToken(),
         nickname,
         sessionToken,
         ready: false,
         score: 0,
         connected: true,
-        disconnectTimer: null
+        disconnectTimer: null,
+        lastChatAt: 0
     };
 }
 
 function createEmptyRound() {
     return {
-        clueGiverId: null,
+        clueGiverPlayerKey: null,
         targetOptions: [],
         target: null,
         clue1: "",
@@ -164,7 +171,7 @@ function createEmptyRound() {
 
 function createResetVote() {
     return {
-        requestedById: null,
+        requestedByPlayerKey: null,
         votesYes: {}
     };
 }
@@ -177,7 +184,8 @@ const room = {
     currentClueGiverIndex: 0,
     roundNumber: 0,
     round: null,
-    resetVote: createResetVote()
+    resetVote: createResetVote(),
+    chat: []
 };
 
 function activePlayers() {
@@ -192,16 +200,8 @@ function findPlayerBySessionToken(sessionToken) {
     return room.players.find((player) => player.sessionToken === sessionToken);
 }
 
-function findPlayerByNickname(nickname) {
-    return room.players.find(
-        (player) => player.nickname.toLowerCase() === String(nickname).toLowerCase()
-    );
-}
-
-function getClueGiver() {
-    const players = activePlayers();
-    if (!players.length) return null;
-    return players[room.currentClueGiverIndex] || players[0];
+function findPlayerByPlayerKey(playerKey) {
+    return room.players.find((player) => player.playerKey === playerKey);
 }
 
 function everyoneReadyInLobby() {
@@ -211,22 +211,30 @@ function everyoneReadyInLobby() {
 
 function everyoneGuessedOnce() {
     if (!room.round) return false;
-    const players = activePlayers().filter((p) => p.id !== room.round.clueGiverId);
+
+    const players = activePlayers().filter(
+        (p) => p.playerKey !== room.round.clueGiverPlayerKey
+    );
+
     if (!players.length) return false;
 
     return players.every((player) => {
-        const guess = room.round.guesses[player.id];
+        const guess = room.round.guesses[player.playerKey];
         return guess && guess.firstLocked;
     });
 }
 
 function everyoneLockedFinalGuess() {
     if (!room.round) return false;
-    const players = activePlayers().filter((p) => p.id !== room.round.clueGiverId);
+
+    const players = activePlayers().filter(
+        (p) => p.playerKey !== room.round.clueGiverPlayerKey
+    );
+
     if (!players.length) return false;
 
     return players.every((player) => {
-        const guess = room.round.guesses[player.id];
+        const guess = room.round.guesses[player.playerKey];
         return guess && guess.finalLocked;
     });
 }
@@ -235,7 +243,7 @@ function everyoneAcceptedReset() {
     const players = activePlayers();
     if (!players.length) return false;
 
-    return players.every((player) => room.resetVote.votesYes[player.id] === true);
+    return players.every((player) => room.resetVote.votesYes[player.playerKey] === true);
 }
 
 function distanceScore(target, guess) {
@@ -257,16 +265,19 @@ function isInside3x3(target, guess) {
 
 function buildRoundScoring() {
     const target = room.round.target;
-    const clueGiver = room.players.find((player) => player.id === room.round.clueGiverId);
+    const clueGiver = findPlayerByPlayerKey(room.round.clueGiverPlayerKey);
 
     if (!target || !clueGiver) return null;
 
-    const players = activePlayers().filter((player) => player.id !== clueGiver.id);
+    const players = room.players.filter(
+        (player) => player.playerKey !== clueGiver.playerKey
+    );
+
     const results = [];
     let clueGiverPoints = 0;
 
     for (const player of players) {
-        const guess = room.round.guesses[player.id];
+        const guess = room.round.guesses[player.playerKey];
         if (!guess || !guess.final) continue;
 
         const playerPoints = distanceScore(target, guess.final);
@@ -279,6 +290,7 @@ function buildRoundScoring() {
 
         results.push({
             playerId: player.id,
+            playerKey: player.playerKey,
             nickname: player.nickname,
             guess: guess.final,
             points: playerPoints
@@ -290,6 +302,7 @@ function buildRoundScoring() {
     return {
         target,
         clueGiverId: clueGiver.id,
+        clueGiverPlayerKey: clueGiver.playerKey,
         clueGiverNickname: clueGiver.nickname,
         clueGiverPoints,
         results
@@ -304,10 +317,10 @@ function resetResetVote() {
     room.resetVote = createResetVote();
 }
 
-function startResetVote(requestedById) {
+function startResetVote(requestedByPlayerKey) {
     room.resetVote = createResetVote();
-    room.resetVote.requestedById = requestedById;
-    room.resetVote.votesYes[requestedById] = true;
+    room.resetVote.requestedByPlayerKey = requestedByPlayerKey;
+    room.resetVote.votesYes[requestedByPlayerKey] = true;
 }
 
 function fullResetToLobbyKeepPlayers() {
@@ -324,11 +337,13 @@ function fullResetToLobbyKeepPlayers() {
     }
 }
 
-function removePlayerPermanently(playerId) {
-    const index = room.players.findIndex((player) => player.id === playerId);
+function removePlayerPermanently(playerKey) {
+    const index = room.players.findIndex((player) => player.playerKey === playerKey);
     if (index === -1) return;
 
-    const wasClueGiver = room.round && room.round.clueGiverId === playerId;
+    const wasClueGiver =
+        room.round && room.round.clueGiverPlayerKey === playerKey;
+
     room.players.splice(index, 1);
 
     const players = activePlayers();
@@ -336,6 +351,7 @@ function removePlayerPermanently(playerId) {
     if (!players.length) {
         fullResetToLobbyKeepPlayers();
         room.players = [];
+        room.chat = [];
         return;
     }
 
@@ -357,7 +373,7 @@ function removePlayerPermanently(playerId) {
         return;
     }
 
-    if (room.resetVote.requestedById && everyoneAcceptedReset()) {
+    if (room.resetVote.requestedByPlayerKey && everyoneAcceptedReset()) {
         fullResetToLobbyKeepPlayers();
     }
 }
@@ -379,6 +395,12 @@ function resetScoresAndReadyForNewGame() {
     }
 }
 
+function getClueGiver() {
+    const players = activePlayers();
+    if (!players.length) return null;
+    return players[room.currentClueGiverIndex] || players[0];
+}
+
 function startNextRound() {
     const players = activePlayers();
 
@@ -397,7 +419,7 @@ function startNextRound() {
 
     room.roundNumber += 1;
     room.round = createEmptyRound();
-    room.round.clueGiverId = clueGiver.id;
+    room.round.clueGiverPlayerKey = clueGiver.playerKey;
     room.round.targetOptions = pickTargetOptions();
     room.phase = "chooseTarget";
 
@@ -442,6 +464,7 @@ function finishRoundAndMaybeContinue() {
 function serializePlayer(player) {
     return {
         id: player.id,
+        playerKey: player.playerKey,
         nickname: player.nickname,
         ready: player.ready,
         score: player.score,
@@ -449,31 +472,77 @@ function serializePlayer(player) {
     };
 }
 
+function serializeChatMessage(message) {
+    return {
+        id: message.id,
+        playerKey: message.playerKey,
+        nickname: message.nickname,
+        text: message.text,
+        createdAt: message.createdAt
+    };
+}
+
+function pushChatMessage({ playerKey, nickname, text }) {
+    const message = {
+        id: randomToken(),
+        playerKey,
+        nickname,
+        text,
+        createdAt: Date.now()
+    };
+
+    room.chat.push(message);
+
+    if (room.chat.length > MAX_CHAT_MESSAGES) {
+        room.chat = room.chat.slice(-MAX_CHAT_MESSAGES);
+    }
+
+    return message;
+}
+
+function emitChatHistory(socket) {
+    socket.emit("chat_history", room.chat.map(serializeChatMessage));
+}
+
+function emitChatMessage(message) {
+    io.emit("chat_message", serializeChatMessage(message));
+}
+
 function getPublicRoundFor(socketId) {
     if (!room.round) return null;
 
-    const isClueGiver = socketId === room.round.clueGiverId;
+    const viewer = findPlayerBySocketId(socketId);
+    const viewerPlayerKey = viewer?.playerKey || null;
+    const isClueGiver = viewerPlayerKey === room.round.clueGiverPlayerKey;
     const publicGuesses = {};
 
-    for (const player of activePlayers()) {
-        if (player.id === room.round.clueGiverId) continue;
+    for (const player of room.players) {
+        if (player.playerKey === room.round.clueGiverPlayerKey) continue;
 
-        const guess = room.round.guesses[player.id];
+        const guess = room.round.guesses[player.playerKey];
         if (!guess) continue;
 
-        publicGuesses[player.id] = {
+        const visibleGuess =
+            room.phase === "scoring" || room.phase === "finished"
+                ? guess.final || guess.current || null
+                : player.playerKey === viewerPlayerKey
+                    ? guess.current || null
+                    : null;
+
+        publicGuesses[player.playerKey] = {
+            playerId: player.id,
+            playerKey: player.playerKey,
             nickname: player.nickname,
-            visible:
-                room.phase === "scoring" || room.phase === "finished"
-                    ? guess.final || guess.current || null
-                    : guess.current || null
+            visible: visibleGuess
         };
     }
 
+    const clueGiver = findPlayerByPlayerKey(room.round.clueGiverPlayerKey);
+
     return {
-        clueGiverId: room.round.clueGiverId,
-        clueGiverNickname:
-            room.players.find((player) => player.id === room.round.clueGiverId)?.nickname || "",
+        clueGiverId: clueGiver?.id || null,
+        clueGiverPlayerKey: room.round.clueGiverPlayerKey,
+        clueGiverNickname: clueGiver?.nickname || "",
         targetOptions: isClueGiver ? room.round.targetOptions : [],
         target:
             room.phase === "scoring" || room.phase === "finished"
@@ -487,29 +556,32 @@ function getPublicRoundFor(socketId) {
 }
 
 function getResetVoteFor(socketId) {
-    if (!room.resetVote.requestedById) return null;
+    if (!room.resetVote.requestedByPlayerKey) return null;
 
+    const me = findPlayerBySocketId(socketId);
     const requestedBy =
-        room.players.find((player) => player.id === room.resetVote.requestedById)?.nickname || "Alguien";
+        findPlayerByPlayerKey(room.resetVote.requestedByPlayerKey)?.nickname || "Alguien";
 
     const acceptedIds = Object.keys(room.resetVote.votesYes);
     const players = activePlayers();
 
     return {
         active: true,
-        requestedById: room.resetVote.requestedById,
+        requestedByPlayerKey: room.resetVote.requestedByPlayerKey,
         requestedByNickname: requestedBy,
-        acceptedByMe: room.resetVote.votesYes[socketId] === true,
+        acceptedByMe: me ? room.resetVote.votesYes[me.playerKey] === true : false,
         yesCount: acceptedIds.length,
         totalCount: players.length
     };
 }
 
 function getPublicState(socketId = null) {
-    const players = activePlayers();
-    const readyCount = players.filter((p) => p.ready).length;
-    const totalCount = players.length;
+    const players = room.players;
+    const active = activePlayers();
+    const readyCount = active.filter((p) => p.ready).length;
+    const totalCount = active.length;
     const winner = getWinner();
+    const me = findPlayerBySocketId(socketId);
 
     return {
         phase: room.phase,
@@ -520,12 +592,17 @@ function getPublicState(socketId = null) {
         canStart: totalCount >= MIN_PLAYERS && readyCount === totalCount,
         board: room.board,
         roundNumber: room.roundNumber,
-        currentClueGiverId: room.round?.clueGiverId || null,
-        meId: socketId,
+        currentClueGiverId: room.round
+            ? findPlayerByPlayerKey(room.round.clueGiverPlayerKey)?.id || null
+            : null,
+        currentClueGiverPlayerKey: room.round?.clueGiverPlayerKey || null,
+        meId: me?.id || socketId,
+        mePlayerKey: me?.playerKey || null,
         maxScore: MAX_SCORE,
         winner: winner
             ? {
                 id: winner.id,
+                playerKey: winner.playerKey,
                 nickname: winner.nickname,
                 score: winner.score
             }
@@ -567,11 +644,13 @@ io.on("connection", (socket) => {
 
                 socket.emit("joined_ok", {
                     id: socket.id,
+                    playerKey: existingByToken.playerKey,
                     sessionToken: existingByToken.sessionToken,
                     reconnected: true
                 });
 
                 emitStateToAll();
+                emitChatHistory(socket);
                 return;
             }
         }
@@ -603,11 +682,13 @@ io.on("connection", (socket) => {
 
         socket.emit("joined_ok", {
             id: socket.id,
+            playerKey: player.playerKey,
             sessionToken: token,
             reconnected: false
         });
 
         emitStateToAll();
+        emitChatHistory(socket);
     });
 
     socket.on("toggle_ready", () => {
@@ -626,7 +707,10 @@ io.on("connection", (socket) => {
 
     socket.on("select_target", ({ x, y }) => {
         if (room.phase !== "chooseTarget" || !room.round) return;
-        if (socket.id !== room.round.clueGiverId) return;
+
+        const player = findPlayerBySocketId(socket.id);
+        if (!player) return;
+        if (player.playerKey !== room.round.clueGiverPlayerKey) return;
 
         const valid = room.round.targetOptions.some((option) => option.x === x && option.y === y);
         if (!valid) return;
@@ -638,7 +722,10 @@ io.on("connection", (socket) => {
 
     socket.on("submit_clue1", ({ clue }) => {
         if (room.phase !== "clue1" || !room.round) return;
-        if (socket.id !== room.round.clueGiverId) return;
+
+        const player = findPlayerBySocketId(socket.id);
+        if (!player) return;
+        if (player.playerKey !== room.round.clueGiverPlayerKey) return;
 
         const cleanClue = String(clue || "").trim().slice(0, 30);
         const validation = validateClue(cleanClue, 1);
@@ -655,7 +742,10 @@ io.on("connection", (socket) => {
 
     socket.on("submit_clue2", ({ clue }) => {
         if (room.phase !== "clue2" || !room.round) return;
-        if (socket.id !== room.round.clueGiverId) return;
+
+        const player = findPlayerBySocketId(socket.id);
+        if (!player) return;
+        if (player.playerKey !== room.round.clueGiverPlayerKey) return;
 
         const cleanClue = String(clue || "").trim().slice(0, 50);
         const validation = validateClue(cleanClue, 2);
@@ -672,17 +762,24 @@ io.on("connection", (socket) => {
 
     socket.on("submit_guess", ({ x, y }) => {
         if (!room.round) return;
-        if (socket.id === room.round.clueGiverId) return;
-        if (room.phase !== "guess1" && room.phase !== "guess2") return;
 
         const player = findPlayerBySocketId(socket.id);
         if (!player || !player.connected) return;
+        if (player.playerKey === room.round.clueGiverPlayerKey) return;
+        if (room.phase !== "guess1" && room.phase !== "guess2") return;
 
-        const safeX = clamp(Number(x), 0, BOARD_COLS - 1);
-        const safeY = clamp(Number(y), 0, BOARD_ROWS - 1);
+        const numX = Number(x);
+        const numY = Number(y);
 
-        if (!room.round.guesses[player.id]) {
-            room.round.guesses[player.id] = {
+        if (!Number.isFinite(numX) || !Number.isFinite(numY)) {
+            return;
+        }
+
+        const safeX = clamp(Math.round(numX), 0, BOARD_COLS - 1);
+        const safeY = clamp(Math.round(numY), 0, BOARD_ROWS - 1);
+
+        if (!room.round.guesses[player.playerKey]) {
+            room.round.guesses[player.playerKey] = {
                 current: null,
                 first: null,
                 final: null,
@@ -691,7 +788,7 @@ io.on("connection", (socket) => {
             };
         }
 
-        const guess = room.round.guesses[player.id];
+        const guess = room.round.guesses[player.playerKey];
 
         if (room.phase === "guess1" && guess.firstLocked) return;
         if (room.phase === "guess2" && guess.finalLocked) return;
@@ -702,9 +799,12 @@ io.on("connection", (socket) => {
 
     socket.on("lock_first_guess", () => {
         if (room.phase !== "guess1" || !room.round) return;
-        if (socket.id === room.round.clueGiverId) return;
 
-        const guess = room.round.guesses[socket.id];
+        const player = findPlayerBySocketId(socket.id);
+        if (!player) return;
+        if (player.playerKey === room.round.clueGiverPlayerKey) return;
+
+        const guess = room.round.guesses[player.playerKey];
         if (!guess || !guess.current) return;
 
         guess.first = { ...guess.current };
@@ -720,9 +820,12 @@ io.on("connection", (socket) => {
 
     socket.on("lock_final_guess", () => {
         if (room.phase !== "guess2" || !room.round) return;
-        if (socket.id === room.round.clueGiverId) return;
 
-        const guess = room.round.guesses[socket.id];
+        const player = findPlayerBySocketId(socket.id);
+        if (!player) return;
+        if (player.playerKey === room.round.clueGiverPlayerKey) return;
+
+        const guess = room.round.guesses[player.playerKey];
         if (!guess || !guess.current) return;
 
         guess.final = { ...guess.current };
@@ -739,21 +842,55 @@ io.on("connection", (socket) => {
         const player = findPlayerBySocketId(socket.id);
         if (!player || !room.gameStarted) return;
 
-        startResetVote(player.id);
+        startResetVote(player.playerKey);
         emitStateToAll();
     });
 
     socket.on("accept_reset_game", () => {
         const player = findPlayerBySocketId(socket.id);
-        if (!player || !room.resetVote.requestedById) return;
+        if (!player || !room.resetVote.requestedByPlayerKey) return;
 
-        room.resetVote.votesYes[player.id] = true;
+        room.resetVote.votesYes[player.playerKey] = true;
 
         if (everyoneAcceptedReset()) {
             fullResetToLobbyKeepPlayers();
         }
 
         emitStateToAll();
+    });
+
+    socket.on("send_chat_message", ({ text }) => {
+        const player = findPlayerBySocketId(socket.id);
+        if (!player || !player.connected) {
+            socket.emit("chat_error", { message: "No estás unido a la sala." });
+            return;
+        }
+
+        const cleanText = String(text || "")
+            .trim()
+            .replace(/\s+/g, " ")
+            .slice(0, MAX_CHAT_LENGTH);
+
+        if (!cleanText) {
+            socket.emit("chat_error", { message: "El mensaje está vacío." });
+            return;
+        }
+
+        const now = Date.now();
+        if (now - player.lastChatAt < CHAT_MIN_INTERVAL_MS) {
+            socket.emit("chat_error", { message: "Estás enviando mensajes demasiado rápido." });
+            return;
+        }
+
+        player.lastChatAt = now;
+
+        const message = pushChatMessage({
+            playerKey: player.playerKey,
+            nickname: player.nickname,
+            text: cleanText
+        });
+
+        emitChatMessage(message);
     });
 
     socket.on("disconnect", () => {
@@ -763,7 +900,7 @@ io.on("connection", (socket) => {
         player.connected = false;
 
         player.disconnectTimer = setTimeout(() => {
-            removePlayerPermanently(player.id);
+            removePlayerPermanently(player.playerKey);
             emitStateToAll();
         }, RECONNECT_GRACE_MS);
 
