@@ -278,22 +278,31 @@ function buildRoundScoring() {
 
     for (const player of players) {
         const guess = room.round.guesses[player.playerKey];
-        if (!guess || !guess.final) continue;
+        if (!guess) continue;
 
-        const playerPoints = distanceScore(target, guess.final);
+        const firstPoints = guess.first ? distanceScore(target, guess.first) : 0;
+        const finalPoints = guess.final ? distanceScore(target, guess.final) : 0;
+        const totalPoints = firstPoints + finalPoints;
 
-        if (isInside3x3(target, guess.final)) {
+        if (guess.first && isInside3x3(target, guess.first)) {
             clueGiverPoints += 1;
         }
 
-        player.score += playerPoints;
+        if (guess.final && isInside3x3(target, guess.final)) {
+            clueGiverPoints += 1;
+        }
+
+        player.score += totalPoints;
 
         results.push({
             playerId: player.id,
             playerKey: player.playerKey,
             nickname: player.nickname,
-            guess: guess.final,
-            points: playerPoints
+            firstGuess: guess.first || null,
+            finalGuess: guess.final || null,
+            firstPoints,
+            finalPoints,
+            totalPoints
         });
     }
 
@@ -522,18 +531,22 @@ function getPublicRoundFor(socketId) {
         const guess = room.round.guesses[player.playerKey];
         if (!guess) continue;
 
-        const visibleGuess =
-            room.phase === "scoring" || room.phase === "finished"
-                ? guess.final || guess.current || null
-                : player.playerKey === viewerPlayerKey
-                    ? guess.current || null
-                    : null;
+        const showAllFinalRound = room.phase === "scoring" || room.phase === "finished";
+        const isOwnGuess = player.playerKey === viewerPlayerKey;
 
         publicGuesses[player.playerKey] = {
             playerId: player.id,
             playerKey: player.playerKey,
             nickname: player.nickname,
-            visible: visibleGuess
+            firstVisible: showAllFinalRound
+                ? (guess.first || null)
+                : (isOwnGuess ? (guess.first || null) : null),
+            currentVisible: showAllFinalRound
+                ? (guess.current || null)
+                : (isOwnGuess ? (guess.current || null) : null),
+            finalVisible: showAllFinalRound
+                ? (guess.final || null)
+                : null
         };
     }
 
@@ -548,6 +561,7 @@ function getPublicRoundFor(socketId) {
             room.phase === "scoring" || room.phase === "finished"
                 ? room.round.target
                 : null,
+        selectedTargetForClueGiver: isClueGiver && room.round.target ? room.round.target : null,
         clue1: room.round.clue1,
         clue2: room.round.clue2,
         guesses: publicGuesses,

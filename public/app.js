@@ -148,7 +148,13 @@ function getMyGuessData() {
 
 function showMarkerAlreadyAt(x, y, guesses) {
     return Object.values(guesses).some((guessInfo) => {
-        return guessInfo.visible && guessInfo.visible.x === x && guessInfo.visible.y === y;
+        const positions = [
+            guessInfo.firstVisible,
+            guessInfo.currentVisible,
+            guessInfo.finalVisible
+        ].filter(Boolean);
+
+        return positions.some((pos) => pos.x === x && pos.y === y);
     });
 }
 
@@ -233,19 +239,41 @@ function renderBoard() {
             if (showTarget && showTarget.x === x && showTarget.y === y) {
                 const marker = document.createElement("div");
                 marker.className = "marker target";
+                marker.title = `Objetivo: ${coordText(x, y)}`;
                 cell.appendChild(marker);
             }
 
             Object.entries(guesses).forEach(([playerKey, guessInfo]) => {
-                if (!guessInfo.visible) return;
-                if (guessInfo.visible.x !== x || guessInfo.visible.y !== y) return;
+                const playerColor = getPlayerMarkerColor(playerKey);
 
-                const marker = document.createElement("div");
-                marker.className = "marker";
-                marker.style.background =
-                    playerKey === myPlayerKey ? "rgba(255,255,255,0.95)" : "rgba(17,17,17,0.85)";
-                marker.title = `${guessInfo.nickname}: ${coordText(x, y)}`;
-                cell.appendChild(marker);
+                if (guessInfo.firstVisible && guessInfo.firstVisible.x === x && guessInfo.firstVisible.y === y) {
+                    const marker = document.createElement("div");
+                    marker.className = "marker marker-first";
+                    marker.style.background = playerColor;
+                    marker.title = `${guessInfo.nickname} · primer guess: ${coordText(x, y)}`;
+                    cell.appendChild(marker);
+                }
+
+                if (guessInfo.finalVisible && guessInfo.finalVisible.x === x && guessInfo.finalVisible.y === y) {
+                    const marker = document.createElement("div");
+                    marker.className = "marker marker-final";
+                    marker.style.background = playerColor;
+                    marker.title = `${guessInfo.nickname} · guess final: ${coordText(x, y)}`;
+                    cell.appendChild(marker);
+                }
+
+                if (
+                    guessInfo.currentVisible &&
+                    guessInfo.currentVisible.x === x &&
+                    guessInfo.currentVisible.y === y &&
+                    !guessInfo.finalVisible
+                ) {
+                    const marker = document.createElement("div");
+                    marker.className = "marker marker-current";
+                    marker.style.background = playerColor;
+                    marker.title = `${guessInfo.nickname} · selección actual: ${coordText(x, y)}`;
+                    cell.appendChild(marker);
+                }
             });
 
             if (
@@ -255,8 +283,9 @@ function renderBoard() {
                 !showMarkerAlreadyAt(x, y, guesses)
             ) {
                 const marker = document.createElement("div");
-                marker.className = "marker";
+                marker.className = "marker marker-current mine";
                 marker.style.background = "rgba(255,255,255,0.95)";
+                marker.title = `Tu selección actual: ${coordText(x, y)}`;
                 cell.appendChild(marker);
             }
 
@@ -438,6 +467,21 @@ function renderTargetOptions(options, selectedTarget) {
   `;
 }
 
+function hashString(str) {
+    let hash = 0;
+    const s = String(str || "");
+    for (let i = 0; i < s.length; i += 1) {
+        hash = ((hash << 5) - hash) + s.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function getPlayerMarkerColor(playerKey) {
+    const hue = hashString(playerKey) % 360;
+    return `hsl(${hue} 85% 55%)`;
+}
+
 function renderControlPanel() {
     const phase = latestState.phase;
     const round = getRound();
@@ -484,15 +528,16 @@ function renderControlPanel() {
     if (phase === "clue1") {
         if (isClueGiver()) {
             controlPanel.innerHTML = `
-        <div>
-          <h3>PRIMERA PISTA</h3>
-          <p class="info-text">Exactamente 1 palabra. No se permiten nombres de colores ni direcciones.</p>
-          <div class="form-inline">
-            <input id="clue1Input" maxlength="30" placeholder="Ejemplo: cereza" />
-            <button id="sendClue1Btn">Enviar pista</button>
-          </div>
-        </div>
-      `;
+    ${renderTargetReminder()}
+    <div>
+      <h3>PRIMERA PISTA</h3>
+      <p class="info-text">Exactamente 1 palabra. No se permiten nombres de colores ni direcciones.</p>
+      <div class="form-inline">
+        <input id="clue1Input" maxlength="30" placeholder="Ejemplo: cereza" />
+        <button id="sendClue1Btn">Enviar pista</button>
+      </div>
+    </div>
+`;
 
             const sendBtn = document.getElementById("sendClue1Btn");
             const input = document.getElementById("clue1Input");
@@ -516,8 +561,9 @@ function renderControlPanel() {
     if (phase === "guess1") {
         if (isClueGiver()) {
             controlPanel.innerHTML = `
-        <p class="info-text">Esperando las primeras elecciones del resto de jugadores.</p>
-      `;
+    ${renderTargetReminder()}
+    <p class="info-text">Esperando las primeras elecciones del resto de jugadores.</p>
+`;
         } else {
             controlPanel.innerHTML = `
         <div>
@@ -552,15 +598,16 @@ function renderControlPanel() {
     if (phase === "clue2") {
         if (isClueGiver()) {
             controlPanel.innerHTML = `
-        <div>
-          <h3>SEGUNDA PISTA</h3>
-          <p class="info-text">Exactamente 2 palabras. No se permiten nombres de colores ni direcciones.</p>
-          <div class="form-inline">
-            <input id="clue2Input" maxlength="50" placeholder="Ejemplo: fruta madura" />
-            <button id="sendClue2Btn">Enviar pista</button>
-          </div>
-        </div>
-      `;
+    ${renderTargetReminder()}
+    <div>
+      <h3>SEGUNDA PISTA</h3>
+      <p class="info-text">Exactamente 2 palabras. No se permiten nombres de colores ni direcciones.</p>
+      <div class="form-inline">
+        <input id="clue2Input" maxlength="50" placeholder="Ejemplo: fruta madura" />
+        <button id="sendClue2Btn">Enviar pista</button>
+      </div>
+    </div>
+`;
 
             const sendBtn = document.getElementById("sendClue2Btn");
             const input = document.getElementById("clue2Input");
@@ -584,8 +631,9 @@ function renderControlPanel() {
     if (phase === "guess2") {
         if (isClueGiver()) {
             controlPanel.innerHTML = `
-        <p class="info-text">Esperando a que todos bloqueen su elección final.</p>
-      `;
+    ${renderTargetReminder()}
+    <p class="info-text">Esperando a que todos bloqueen su elección final.</p>
+`;
         } else {
             controlPanel.innerHTML = `
         <div>
@@ -662,17 +710,42 @@ function renderScoring() {
     <h3>RESULTADO DE LA RONDA</h3>
     <p>
       <strong>${escapeHtml(scoring.clueGiverNickname)}</strong> gana
-      <strong>${scoring.clueGiverPoints}</strong> punto(s) por jugadores dentro del área 3x3.
+      <strong>${scoring.clueGiverPoints}</strong> punto(s) por guesses dentro del área 3x3.
     </p>
     <ul class="scoring-list">
       ${scoring.results.map((result) => `
         <li class="scoring-item">
-          <span>${escapeHtml(result.nickname)} → ${coordText(result.guess.x, result.guess.y)}</span>
-          <strong>+${result.points} pts</strong>
+          <div>
+            <strong>${escapeHtml(result.nickname)}</strong><br>
+            <span>1º: ${result.firstGuess ? coordText(result.firstGuess.x, result.firstGuess.y) : "-"}</span>
+            &nbsp;(+${result.firstPoints})<br>
+            <span>2º: ${result.finalGuess ? coordText(result.finalGuess.x, result.finalGuess.y) : "-"}</span>
+            &nbsp;(+${result.finalPoints})
+          </div>
+          <strong>+${result.totalPoints} pts</strong>
         </li>
       `).join("")}
     </ul>
   `;
+}
+
+function renderTargetReminder() {
+    const round = getRound();
+    const target = round?.selectedTargetForClueGiver;
+
+    if (!isClueGiver() || !target) return "";
+
+    const color = getCellColor(target.x, target.y);
+
+    return `
+      <div class="target-reminder">
+        <div class="target-reminder-preview" style="background:${escapeHtml(color)}"></div>
+        <div>
+          <div class="target-reminder-label">TU COLOR OBJETIVO</div>
+          <strong>${coordText(target.x, target.y)}</strong>
+        </div>
+      </div>
+    `;
 }
 
 function renderWinner() {
